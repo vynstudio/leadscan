@@ -1,7 +1,7 @@
 import { Link, useLocation } from "wouter";
 import { useTheme } from "@/components/ThemeProvider";
 import {
-  LayoutDashboard, Search, History, Settings, Zap, Moon, Sun, Radio
+  LayoutDashboard, Search, History, Settings, Zap, Moon, Sun, Radio, LogOut
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -16,10 +16,32 @@ const navItems = [
   { href: "/settings", label: "Settings", icon: Settings },
 ];
 
-export default function Layout({ children }: { children: React.ReactNode }) {
+export default function Layout({ children, onLogout }: { children: React.ReactNode; onLogout?: () => void }) {
   const [location] = useLocation();
   const { theme, toggle } = useTheme();
   const qc = useQueryClient();
+
+  const { data: stats } = useQuery<any>({
+    queryKey: ["/api/stats"],
+    refetchInterval: 10000,
+  });
+
+  const { data: scanStatus } = useQuery<any>({
+    queryKey: ["/api/scan/status"],
+    refetchInterval: 3000,
+  });
+
+  const scanMutation = useMutation({
+    mutationFn: () => apiRequest("POST", "/api/scan"),
+    onSuccess: () => {
+      setTimeout(() => qc.invalidateQueries(), 5000);
+    },
+  });
+
+  const handleLogout = async () => {
+    await fetch("/api/auth/logout", { method: "POST" });
+    onLogout?.();
+  };
 
   const { data: stats } = useQuery<any>({
     queryKey: ["/api/stats"],
@@ -107,9 +129,14 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           <div className="text-[10px] text-muted-foreground">
             {stats?.total || 0} total leads
           </div>
-          <Button variant="ghost" size="icon" className="w-7 h-7" onClick={toggle} data-testid="button-theme-toggle">
-            {theme === "dark" ? <Sun className="w-3.5 h-3.5" /> : <Moon className="w-3.5 h-3.5" />}
-          </Button>
+          <div className="flex items-center gap-1">
+            <Button variant="ghost" size="icon" className="w-7 h-7" onClick={toggle} data-testid="button-theme-toggle">
+              {theme === "dark" ? <Sun className="w-3.5 h-3.5" /> : <Moon className="w-3.5 h-3.5" />}
+            </Button>
+            <Button variant="ghost" size="icon" className="w-7 h-7 text-muted-foreground hover:text-foreground" onClick={handleLogout} title="Sign out">
+              <LogOut className="w-3.5 h-3.5" />
+            </Button>
+          </div>
         </div>
       </aside>
 

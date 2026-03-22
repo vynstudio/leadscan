@@ -5,11 +5,18 @@ import { insertLeadSchema } from "@shared/schema";
 import { runAllScanners, scanCraigslist, scanReddit, scanNextdoor, scanFacebook } from "./scanner";
 import cron from "node-cron";
 import { z } from "zod";
+import { requireAuth } from "./auth";
 
 let scannerJob: cron.ScheduledTask | null = null;
 let isScanning = false;
 
 export async function registerRoutes(httpServer: Server, app: Express) {
+
+  // Protect all /api routes except /api/auth/*
+  app.use("/api", (req, res, next) => {
+    if (req.path.startsWith("/auth/")) return next();
+    return requireAuth(req, res, next);
+  });
 
   // ---- LEADS ROUTES ----
   app.get("/api/leads", (req, res) => {
