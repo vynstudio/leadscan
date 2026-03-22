@@ -49,12 +49,38 @@ export async function scanFacebookReal(): Promise<number> {
 
     // Login to Facebook
     console.log("[Facebook] Logging in...");
-    await page.goto("https://www.facebook.com/login", { waitUntil: "networkidle", timeout: 30000 });
-    await page.waitForTimeout(2000);
+    await page.goto("https://www.facebook.com/", { waitUntil: "domcontentloaded", timeout: 30000 });
+    await page.waitForTimeout(3000);
 
-    await page.fill('#email', email);
-    await page.fill('#pass', password);
-    await page.click('button[name="login"], [data-testid="royal_login_button"]');
+    // Try multiple selectors for email field (FB changes these often)
+    const emailSelectors = ['#email', 'input[name="email"]', 'input[type="email"]', 'input[autocomplete="username"]'];
+    let filled = false;
+    for (const sel of emailSelectors) {
+      try {
+        await page.waitForSelector(sel, { timeout: 5000 });
+        await page.fill(sel, email);
+        filled = true;
+        break;
+      } catch {}
+    }
+    if (!filled) throw new Error("Could not find email field on Facebook login page");
+
+    const passSelectors = ['#pass', 'input[name="pass"]', 'input[type="password"]', 'input[autocomplete="current-password"]'];
+    for (const sel of passSelectors) {
+      try {
+        await page.fill(sel, password);
+        break;
+      } catch {}
+    }
+
+    // Click login button
+    const loginSelectors = ['button[name="login"]', '[data-testid="royal_login_button"]', 'button[type="submit"]', 'input[type="submit"]'];
+    for (const sel of loginSelectors) {
+      try {
+        await page.click(sel, { timeout: 3000 });
+        break;
+      } catch {}
+    }
     await page.waitForTimeout(5000);
 
     // Check login succeeded
