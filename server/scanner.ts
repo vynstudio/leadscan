@@ -2,7 +2,7 @@ import axios from "axios";
 import * as cheerio from "cheerio";
 import { storage } from "./storage";
 import type { InsertLead } from "@shared/schema";
-import { detectCategory, detectPriority } from "./keywords";
+import { detectCategory, detectPriority, SERVICE_KEYWORDS } from "./keywords";
 import { scanNextdoorReal } from "./scrapers/nextdoor";
 import { scanFacebookReal } from "./scrapers/facebook";
 
@@ -29,24 +29,31 @@ export async function scanCraigslist(city?: string): Promise<number> {
       try {
         const url = `https://${activeCity}.craigslist.org/search/hss?query=${encodeURIComponent(term)}&sort=date`;
         const res = await axios.get(url, {
-          timeout: 10000,
-          headers: { "User-Agent": "Mozilla/5.0 (compatible; LeadBot/1.0)" },
+          timeout: 15000,
+          headers: {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.5",
+          },
         });
         const $ = cheerio.load(res.data);
 
-        $(".cl-search-result, .result-row, li.result-row").each((_, el) => {
-          const titleEl = $(el).find(".title-anchor, a.result-title, .cl-app-anchor");
-          const title = titleEl.text().trim();
-          const href = titleEl.attr("href") || "";
-          const fullUrl = href.startsWith("http") ? href : `https://${activeCity}.craigslist.org${href}`;
-          const location = $(el).find(".result-hood, .meta .maptag").text().replace(/[()]/g, "").trim();
+        // Try multiple selector patterns for different Craigslist layouts
+        const items = $(".cl-search-result, .result-row, li.result-row, [data-pid]");
+        items.each((_, el) => {
+          const titleEl = $(el).find(".title-anchor, a.result-title, .cl-app-anchor, a[href*='/hss/']").first();
+          const title = titleEl.text().trim() || $(el).find("a").first().text().trim();
+          const href = titleEl.attr("href") || $(el).find("a").first().attr("href") || "";
+          const fullUrl = href.startsWith("http") ? href : href ? `https://${activeCity}.craigslist.org${href}` : "";
+          const location = $(el).find(".result-hood, .meta .maptag, .cl-app-anchor + span").text().replace(/[()]/g, "").trim();
           const dateStr = $(el).find("time").attr("datetime") || new Date().toISOString();
 
           if (!title || title.length < 5) return;
-          if (fullUrl && storage.leadExistsByUrl(fullUrl)) return;
+          if (!fullUrl) return;
+          if (storage.leadExistsByUrl(fullUrl)) return;
 
           const category = detectCategory(title);
-          if (category === "other") return; // Only home services
+          if (category === "other") return;
 
           const lead: InsertLead = {
             title,
@@ -64,6 +71,9 @@ export async function scanCraigslist(city?: string): Promise<number> {
           storage.createLead(lead);
           newLeads++;
         });
+
+        // Add small delay to avoid rate limiting
+        await new Promise(r => setTimeout(r, 500));
       } catch (err) {
         // Skip individual term errors
       }
@@ -95,11 +105,13 @@ export async function scanReddit(): Promise<number> {
   });
 
   const city = storage.getSetting("city") || process.env.DEFAULT_CITY || "orlando";
+  const cityLower = city.toLowerCase().replace(/\s+/g, "");
   const subreddits = [
     "HomeImprovement", "DIY", "Plumbing", "hvac",
     "lawncare", "cleaning_tips", "FirstTimeHomeBuyer",
-    "homeowners", "orlando", "cenfl", "florida"
-  ];
+    "homeowners", "orlando", "cenfl", "florida",
+    "miami", "tampabay", cityLower,
+  ].filter((v, i, a) => a.indexOf(v) === i); // deduplicate
 
   let newLeads = 0;
 
@@ -127,8 +139,13 @@ export async function scanReddit(): Promise<number> {
           const category = detectCategory(fullText);
           if (category === "other") continue;
 
-          // Only show request-type posts (looking for, need, hire, recommend)
-          const requestWords = ["looking for", "need", "hire", "recommend", "help", "find", "seeking", "can anyone"];
+          // Only show request-type posts — broad filter to catch more leads
+          const requestWords = [
+            "looking for", "need", "hire", "recommend", "help", "find", "seeking",
+            "can anyone", "anyone know", "suggestions", "quote", "estimate",
+            "contractor", "service", "company", "professional", "who do you",
+            "best way", "how much", "cost", "price", "available", "anyone",
+          ];
           if (!requestWords.some(w => fullText.toLowerCase().includes(w))) continue;
 
           const lead: InsertLead = {
