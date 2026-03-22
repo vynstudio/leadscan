@@ -35,8 +35,13 @@ export async function scanFacebookReal(): Promise<number> {
   let browser;
 
   try {
+    const executablePath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH ||
+      process.env.CHROMIUM_PATH ||
+      "/usr/bin/chromium";
+
     browser = await chromium.launch({
       headless: true,
+      executablePath,
       args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"],
     });
 
