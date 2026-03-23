@@ -12,6 +12,7 @@ import ScanHistory from "@/pages/ScanHistory";
 import Settings from "@/pages/Settings";
 import NotFound from "@/pages/not-found";
 import Login from "@/pages/Login";
+import NextdoorVerify from "@/components/NextdoorVerify";
 import { useState, useEffect } from "react";
 
 function AuthGate() {
@@ -57,6 +58,7 @@ export default function App() {
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>
         <AuthGate />
+        <NextdoorVerify />
         <Toaster />
       </ThemeProvider>
     </QueryClientProvider>

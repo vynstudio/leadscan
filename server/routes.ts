@@ -3,6 +3,7 @@ import { Server } from "http";
 import { storage } from "./storage";
 import { insertLeadSchema } from "@shared/schema";
 import { runAllScanners, scanCraigslist, scanReddit, scanNextdoor, scanFacebook } from "./scanner";
+import { submitNextdoorCode, getNextdoorVerificationStatus } from "./scrapers/nextdoor";
 import cron from "node-cron";
 import { z } from "zod";
 import { requireAuth } from "./auth";
@@ -81,6 +82,18 @@ export async function registerRoutes(httpServer: Server, app: Express) {
       stats.bySource[lead.source] = (stats.bySource[lead.source] || 0) + 1;
     }
     res.json(stats);
+  });
+
+  // ---- NEXTDOOR VERIFICATION ----
+  app.get("/api/nextdoor/verification-status", (req, res) => {
+    res.json(getNextdoorVerificationStatus());
+  });
+
+  app.post("/api/nextdoor/verify", (req, res) => {
+    const { code } = req.body;
+    if (!code) return res.status(400).json({ message: "Code required" });
+    submitNextdoorCode(String(code).trim());
+    res.json({ success: true });
   });
 
   // ---- SCAN RUNS ----
