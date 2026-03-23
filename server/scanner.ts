@@ -153,24 +153,20 @@ export async function runAllScanners(): Promise<{ total: number; sources: Record
   const useRealFacebook = !!(process.env.FACEBOOK_EMAIL && process.env.FACEBOOK_PASSWORD);
   console.log(`[Scanner] Starting — Nextdoor: ${useRealNextdoor ? "REAL" : "simulated"}, Facebook: ${useRealFacebook ? "REAL" : "simulated"}`);
 
-  const [cl, yelp, google, nextdoor, fb, fbMarket] = await Promise.allSettled([
-    scanCraigslist(),
-    scanYelp(),
-    scanGoogle(),
-    useRealNextdoor ? scanNextdoorReal() : scanNextdoor(),
-    useRealFacebook ? scanFacebookReal() : scanFacebook(),
-    scanFacebookMarketplace(),
-  ]);
-
-  const results = {
-    craigslist: cl.status === "fulfilled" ? cl.value : 0,
-    yelp: yelp.status === "fulfilled" ? yelp.value : 0,
-    google: google.status === "fulfilled" ? google.value : 0,
-    nextdoor: nextdoor.status === "fulfilled" ? nextdoor.value : 0,
-    facebook: fb.status === "fulfilled" ? fb.value : 0,
-    fb_marketplace: fbMarket.status === "fulfilled" ? fbMarket.value : 0,
+  const safe = async (name: string, fn: () => Promise<number>): Promise<number> => {
+    try { return await fn(); } catch (e: any) { console.error(`[Scanner] ${name} crashed:`, e.message); return 0; }
   };
 
+  const [cl, yelp, google, nextdoor, fb, fbMarket] = await Promise.all([
+    safe("craigslist", () => scanCraigslist()),
+    safe("yelp", () => scanYelp()),
+    safe("google", () => scanGoogle()),
+    safe("nextdoor", () => useRealNextdoor ? scanNextdoorReal() : scanNextdoor()),
+    safe("facebook", () => useRealFacebook ? scanFacebookReal() : scanFacebook()),
+    safe("fb_marketplace", () => scanFacebookMarketplace()),
+  ]);
+
+  const results = { craigslist: cl, yelp, google, nextdoor, facebook: fb, fb_marketplace: fbMarket };
   const total = Object.values(results).reduce((a, b) => a + b, 0);
   console.log(`[Scanner] Complete — total: ${total}`, results);
   return { total, sources: results };
