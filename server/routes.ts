@@ -2,7 +2,7 @@ import type { Express } from "express";
 import { Server } from "http";
 import { storage } from "./storage";
 import { insertLeadSchema } from "@shared/schema";
-import { runAllScanners, scanCraigslist, scanReddit, scanNextdoor, scanFacebook } from "./scanner";
+import { runAllScanners, scanCraigslist, scanNextdoor, scanFacebook } from "./scanner";
 import { submitNextdoorCode, getNextdoorVerificationStatus } from "./scrapers/nextdoor";
 import cron from "node-cron";
 import { z } from "zod";
