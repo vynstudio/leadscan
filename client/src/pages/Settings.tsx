@@ -9,7 +9,7 @@ import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Save, Info } from "lucide-react";
 
-const SOURCES = ["craigslist", "yelp", "nextdoor", "facebook"];
+const SOURCES = ["craigslist", "yelp", "google", "nextdoor", "facebook", "fb_marketplace"];
 
 export default function Settings() {
   const qc = useQueryClient();
@@ -21,7 +21,7 @@ export default function Settings() {
 
   const [scanInterval, setScanInterval] = useState("5");
   const [city, setCity] = useState("miami");
-  const [enabledSources, setEnabledSources] = useState<string[]>(["craigslist", "yelp", "nextdoor", "facebook"]);
+  const [enabledSources, setEnabledSources] = useState<string[]>(["craigslist", "yelp", "google", "nextdoor", "facebook", "fb_marketplace"]);
 
   useEffect(() => {
     if (settings) {
@@ -125,7 +125,11 @@ export default function Settings() {
           </div>
           <div className="flex gap-2 text-xs text-muted-foreground">
             <Info className="w-3.5 h-3.5 shrink-0 mt-0.5" />
-            <span><strong className="text-foreground">Facebook</strong> — logs in with your credentials to scan local community groups for service requests.</span>
+            <span><strong className="text-foreground">Google</strong> — searches for people actively asking for home services in your city using targeted search queries.</span>
+          </div>
+          <div className="flex gap-2 text-xs text-muted-foreground">
+            <Info className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+            <span><strong className="text-foreground">FB Marketplace</strong> — scans Facebook Marketplace service listings in your city using your Facebook credentials.</span>
           </div>
         </CardContent>
       </Card>

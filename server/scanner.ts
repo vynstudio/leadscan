@@ -6,6 +6,8 @@ import { detectCategory, detectPriority, SERVICE_KEYWORDS } from "./keywords";
 import { scanNextdoorReal } from "./scrapers/nextdoor";
 import { scanFacebookReal } from "./scrapers/facebook";
 import { scanYelp } from "./scrapers/yelp";
+import { scanGoogle } from "./scrapers/google";
+import { scanFacebookMarketplace } from "./scrapers/facebook_marketplace";
 
 // ---- CRAIGSLIST ----
 export async function scanCraigslist(city?: string): Promise<number> {
@@ -151,18 +153,22 @@ export async function runAllScanners(): Promise<{ total: number; sources: Record
   const useRealFacebook = !!(process.env.FACEBOOK_EMAIL && process.env.FACEBOOK_PASSWORD);
   console.log(`[Scanner] Starting — Nextdoor: ${useRealNextdoor ? "REAL" : "simulated"}, Facebook: ${useRealFacebook ? "REAL" : "simulated"}`);
 
-  const [cl, yelp, nextdoor, fb] = await Promise.allSettled([
+  const [cl, yelp, google, nextdoor, fb, fbMarket] = await Promise.allSettled([
     scanCraigslist(),
     scanYelp(),
+    scanGoogle(),
     useRealNextdoor ? scanNextdoorReal() : scanNextdoor(),
     useRealFacebook ? scanFacebookReal() : scanFacebook(),
+    scanFacebookMarketplace(),
   ]);
 
   const results = {
     craigslist: cl.status === "fulfilled" ? cl.value : 0,
     yelp: yelp.status === "fulfilled" ? yelp.value : 0,
+    google: google.status === "fulfilled" ? google.value : 0,
     nextdoor: nextdoor.status === "fulfilled" ? nextdoor.value : 0,
     facebook: fb.status === "fulfilled" ? fb.value : 0,
+    fb_marketplace: fbMarket.status === "fulfilled" ? fbMarket.value : 0,
   };
 
   const total = Object.values(results).reduce((a, b) => a + b, 0);
