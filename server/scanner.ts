@@ -8,7 +8,6 @@ import { scanFacebookReal } from "./scrapers/facebook";
 
 // ---- CRAIGSLIST SCANNER ----
 export async function scanCraigslist(city?: string): Promise<number> {
-  // Always read city from settings/env so changes take effect immediately
   const activeCity = city || storage.getSetting("city") || process.env.DEFAULT_CITY || "orlando";
   const runRecord = storage.createScanRun({
     source: "craigslist",
@@ -17,74 +16,107 @@ export async function scanCraigslist(city?: string): Promise<number> {
     startedAt: new Date().toISOString(),
   });
 
-  const sections = ["hss", "hss"]; // household services
-  const allKeywords = Object.values(SERVICE_KEYWORDS).flat();
-  // Use a sample of keywords to search
-  const queryTerms = ["cleaning", "plumber", "handyman", "landscaping", "hvac", "remodel"];
-
   let newLeads = 0;
+
+  // Search terms that people USE when LOOKING FOR services
+  const queryTerms = [
+    "need cleaning", "need plumber", "need handyman", "need landscaping",
+    "looking for cleaner", "looking for contractor", "ac repair",
+    "recommend plumber", "recommend electrician", "recommend painter",
+    "anyone know handyman", "who does lawn", "need hvac",
+  ];
 
   try {
     for (const term of queryTerms) {
       try {
-        const url = `https://${activeCity}.craigslist.org/search/hss?query=${encodeURIComponent(term)}&sort=date`;
+        // Use Craigslist's JSON search API (more reliable than HTML scraping)
+        const url = `https://${activeCity}.craigslist.org/search/swp.json?query=${encodeURIComponent(term)}&sort=date&limit=20`;
+        console.log(`[Craigslist] Fetching: ${url}`);
         const res = await axios.get(url, {
           timeout: 15000,
           headers: {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Accept-Language": "en-US,en;q=0.5",
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "application/json, text/html",
           },
         });
-        const $ = cheerio.load(res.data);
 
-        // Try multiple selector patterns for different Craigslist layouts
-        const items = $(".cl-search-result, .result-row, li.result-row, [data-pid]");
-        items.each((_, el) => {
-          const titleEl = $(el).find(".title-anchor, a.result-title, .cl-app-anchor, a[href*='/hss/']").first();
-          const title = titleEl.text().trim() || $(el).find("a").first().text().trim();
-          const href = titleEl.attr("href") || $(el).find("a").first().attr("href") || "";
-          const fullUrl = href.startsWith("http") ? href : href ? `https://${activeCity}.craigslist.org${href}` : "";
-          const location = $(el).find(".result-hood, .meta .maptag, .cl-app-anchor + span").text().replace(/[()]/g, "").trim();
-          const dateStr = $(el).find("time").attr("datetime") || new Date().toISOString();
+        const data = res.data;
+        const items = data?.data?.items || data?.items || [];
+        console.log(`[Craigslist] "${term}" → ${items.length} items (JSON)`);
 
-          if (!title || title.length < 5) return;
-          if (!fullUrl) return;
-          if (storage.leadExistsByUrl(fullUrl)) return;
+        for (const item of items) {
+          const title = item.Title || item.title || item[1] || "";
+          const postUrl = item.PostingURL || item.url || `https://${activeCity}.craigslist.org${item.path || ""}`;
+
+          if (!title || title.length < 5) continue;
+          if (postUrl && storage.leadExistsByUrl(postUrl)) continue;
 
           const category = detectCategory(title);
-          if (category === "other") return;
+          if (category === "other") continue;
 
-          const lead: InsertLead = {
-            title,
+          storage.createLead({
+            title: title.slice(0, 200),
             description: title,
             source: "craigslist",
-            sourceUrl: fullUrl,
+            sourceUrl: postUrl,
             category,
-            location: location || activeCity,
+            location: item.Location || item.location || activeCity,
             status: "new",
             priority: detectPriority(title),
-            postedAt: dateStr,
+            postedAt: item.PostedDate || item.Date || new Date().toISOString(),
             discoveredAt: new Date().toISOString(),
-          };
-
-          storage.createLead(lead);
+          });
           newLeads++;
-        });
+        }
 
-        // Add small delay to avoid rate limiting
-        await new Promise(r => setTimeout(r, 500));
-      } catch (err) {
-        // Skip individual term errors
+        // If JSON didn't work, try HTML fallback
+        if (items.length === 0 && typeof data === "string") {
+          const $ = cheerio.load(data);
+          const found = $("li.result-row, .cl-search-result, [data-pid]");
+          console.log(`[Craigslist] "${term}" → HTML fallback, ${found.length} elements`);
+
+          found.each((_, el) => {
+            const a = $(el).find("a").first();
+            const title = a.text().trim();
+            const href = a.attr("href") || "";
+            const fullUrl = href.startsWith("http") ? href : `https://${activeCity}.craigslist.org${href}`;
+
+            if (!title || title.length < 5 || !href) return;
+            if (storage.leadExistsByUrl(fullUrl)) return;
+
+            const category = detectCategory(title);
+            if (category === "other") return;
+
+            storage.createLead({
+              title: title.slice(0, 200),
+              description: title,
+              source: "craigslist",
+              sourceUrl: fullUrl,
+              category,
+              location: activeCity,
+              status: "new",
+              priority: detectPriority(title),
+              postedAt: new Date().toISOString(),
+              discoveredAt: new Date().toISOString(),
+            });
+            newLeads++;
+          });
+        }
+
+        await new Promise(r => setTimeout(r, 800));
+      } catch (err: any) {
+        console.log(`[Craigslist] Error for "${term}": ${err.message}`);
       }
     }
 
+    console.log(`[Craigslist] Total new leads: ${newLeads}`);
     storage.updateScanRun(runRecord.id, {
       status: "success",
       leadsFound: newLeads,
       finishedAt: new Date().toISOString(),
     });
   } catch (err: any) {
+    console.log(`[Craigslist] Fatal error: ${err.message}`);
     storage.updateScanRun(runRecord.id, {
       status: "failed",
       finishedAt: new Date().toISOString(),
@@ -106,12 +138,12 @@ export async function scanReddit(): Promise<number> {
 
   const city = storage.getSetting("city") || process.env.DEFAULT_CITY || "orlando";
   const cityLower = city.toLowerCase().replace(/\s+/g, "");
+
   const subreddits = [
     "HomeImprovement", "DIY", "Plumbing", "hvac",
-    "lawncare", "cleaning_tips", "FirstTimeHomeBuyer",
-    "homeowners", "orlando", "cenfl", "florida",
-    "miami", "tampabay", cityLower,
-  ].filter((v, i, a) => a.indexOf(v) === i); // deduplicate
+    "lawncare", "homeowners", "orlando", "cenfl",
+    "florida", "miamifl", "tampabay", cityLower,
+  ].filter((v, i, a) => v && a.indexOf(v) === i);
 
   let newLeads = 0;
 
@@ -119,14 +151,20 @@ export async function scanReddit(): Promise<number> {
     for (const sub of subreddits) {
       try {
         const url = `https://www.reddit.com/r/${sub}/new.json?limit=25`;
+        console.log(`[Reddit] Scanning r/${sub}...`);
+
         const res = await axios.get(url, {
-          timeout: 10000,
+          timeout: 12000,
           headers: {
-            "User-Agent": "LeadBot/1.0 (home services lead scanner)",
+            "User-Agent": "HomeLeadScanner/1.0 (home services lead finder)",
+            "Accept": "application/json",
           },
         });
 
         const posts = res.data?.data?.children || [];
+        console.log(`[Reddit] r/${sub} → ${posts.length} posts`);
+
+        let subLeads = 0;
         for (const post of posts) {
           const d = post.data;
           const title: string = d.title || "";
@@ -139,16 +177,16 @@ export async function scanReddit(): Promise<number> {
           const category = detectCategory(fullText);
           if (category === "other") continue;
 
-          // Only show request-type posts — broad filter to catch more leads
+          // Broad request filter
           const requestWords = [
-            "looking for", "need", "hire", "recommend", "help", "find", "seeking",
-            "can anyone", "anyone know", "suggestions", "quote", "estimate",
-            "contractor", "service", "company", "professional", "who do you",
-            "best way", "how much", "cost", "price", "available", "anyone",
+            "looking for", "need", "hire", "recommend", "help", "find",
+            "seeking", "can anyone", "anyone know", "suggestions", "quote",
+            "estimate", "who do you", "cost", "price", "anyone",
+            "advice", "suggestion", "where can", "how do i find",
           ];
           if (!requestWords.some(w => fullText.toLowerCase().includes(w))) continue;
 
-          const lead: InsertLead = {
+          storage.createLead({
             title: title.slice(0, 200),
             description: body.slice(0, 500) || title,
             source: "reddit",
@@ -160,16 +198,19 @@ export async function scanReddit(): Promise<number> {
             priority: detectPriority(fullText),
             postedAt: new Date(d.created_utc * 1000).toISOString(),
             discoveredAt: new Date().toISOString(),
-          };
-
-          storage.createLead(lead);
+          });
           newLeads++;
+          subLeads++;
         }
-      } catch (err) {
-        // Skip individual subreddit errors
+
+        if (subLeads > 0) console.log(`[Reddit] r/${sub} → ${subLeads} new leads`);
+        await new Promise(r => setTimeout(r, 500));
+      } catch (err: any) {
+        console.log(`[Reddit] Error on r/${sub}: ${err.message}`);
       }
     }
 
+    console.log(`[Reddit] Total new leads: ${newLeads}`);
     storage.updateScanRun(runRecord.id, {
       status: "success",
       leadsFound: newLeads,
@@ -186,7 +227,7 @@ export async function scanReddit(): Promise<number> {
   return newLeads;
 }
 
-// ---- NEXTDOOR SIMULATOR (public API not available — simulate realistic leads) ----
+// ---- NEXTDOOR SIMULATOR ----
 export async function scanNextdoor(): Promise<number> {
   const runRecord = storage.createScanRun({
     source: "nextdoor",
@@ -195,58 +236,43 @@ export async function scanNextdoor(): Promise<number> {
     startedAt: new Date().toISOString(),
   });
 
-  // Nextdoor does not have a public API — we simulate realistic neighborhood lead data
-  // In production, integrate via Nextdoor Business API or manual export
   const city = storage.getSetting("city") || process.env.DEFAULT_CITY || "orlando";
-  const isOrlando = city.toLowerCase().includes("orlando");
-  const simulatedPosts = isOrlando ? [
-    { title: "Looking for a reliable house cleaner in the area", location: "Orlando, FL", category: "cleaning" },
-    { title: "Need a plumber ASAP — pipe burst in my kitchen", location: "Winter Park, FL", category: "plumbing", priority: "high" as const },
-    { title: "Recommend a good landscaper for weekly lawn maintenance?", location: "Kissimmee, FL", category: "landscaping" },
-    { title: "Anyone know a handyman who does drywall repairs?", location: "Oviedo, FL", category: "handyman" },
-    { title: "HVAC not working — need repair this week", location: "Sanford, FL", category: "hvac" },
-    { title: "Looking for bathroom remodel contractor, budget ready", location: "Lake Nona, FL", category: "remodeling", priority: "high" as const },
-  ] : [
-    { title: "Looking for a reliable house cleaner in the area", location: `${city}, FL`, category: "cleaning" },
-    { title: "Need a plumber ASAP — pipe burst in my kitchen", location: `${city}, FL`, category: "plumbing", priority: "high" as const },
-    { title: "Recommend a good landscaper for weekly lawn maintenance?", location: `${city}, FL`, category: "landscaping" },
-    { title: "Anyone know a handyman who does drywall repairs?", location: `${city}, FL`, category: "handyman" },
-    { title: "HVAC not working — need repair this week", location: `${city}, FL`, category: "hvac" },
-    { title: "Looking for bathroom remodel contractor, budget ready", location: `${city}, FL`, category: "remodeling", priority: "high" as const },
+  const loc = `${city.charAt(0).toUpperCase() + city.slice(1)}, FL`;
+
+  const posts = [
+    { title: "Looking for a reliable house cleaner in the area", category: "cleaning" },
+    { title: "Need a plumber ASAP — pipe burst in my kitchen", category: "plumbing", priority: "high" as const },
+    { title: "Recommend a good landscaper for weekly lawn maintenance?", category: "landscaping" },
+    { title: "Anyone know a handyman who does drywall repairs?", category: "handyman" },
+    { title: "HVAC not working — need repair this week", category: "hvac" },
+    { title: "Looking for bathroom remodel contractor, budget ready", category: "remodeling", priority: "high" as const },
   ];
 
   let newLeads = 0;
   const now = new Date().toISOString();
 
-  for (const post of simulatedPosts) {
-    // Simulate by using a pseudo-unique URL
-    const fakeUrl = `https://nextdoor.com/p/simulated-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    const lead: InsertLead = {
+  for (const post of posts) {
+    const fakeUrl = `https://nextdoor.com/p/sim-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    storage.createLead({
       title: post.title,
       description: post.title,
       source: "nextdoor",
       sourceUrl: fakeUrl,
       category: post.category,
-      location: post.location,
+      location: loc,
       status: "new",
       priority: (post as any).priority || detectPriority(post.title),
       postedAt: now,
       discoveredAt: now,
-    };
-    storage.createLead(lead);
+    });
     newLeads++;
   }
 
-  storage.updateScanRun(runRecord.id, {
-    status: "success",
-    leadsFound: newLeads,
-    finishedAt: new Date().toISOString(),
-  });
-
+  storage.updateScanRun(runRecord.id, { status: "success", leadsFound: newLeads, finishedAt: now });
   return newLeads;
 }
 
-// ---- FACEBOOK GROUPS SIMULATOR ----
+// ---- FACEBOOK SIMULATOR ----
 export async function scanFacebook(): Promise<number> {
   const runRecord = storage.createScanRun({
     source: "facebook",
@@ -255,51 +281,38 @@ export async function scanFacebook(): Promise<number> {
     startedAt: new Date().toISOString(),
   });
 
-  // Facebook Graph API requires page tokens and group membership
-  // Simulate community group posts for demo — connect FB Business API for live data
   const city = storage.getSetting("city") || process.env.DEFAULT_CITY || "orlando";
-  const isOrlando = city.toLowerCase().includes("orlando");
-  const simulatedPosts = isOrlando ? [
-    { title: "Does anyone have a contact for a good deep cleaning service?", location: "Dr. Phillips, FL", category: "cleaning" },
-    { title: "My AC went out — need a good HVAC company recommendation", location: "Windermere, FL", category: "hvac", priority: "high" as const },
-    { title: "Looking to hire a landscaper for my backyard renovation", location: "Baldwin Park, FL", category: "landscaping" },
-    { title: "Urgent — need water heater replacement today!", location: "Celebration, FL", category: "plumbing", priority: "high" as const },
-    { title: "Anyone recommend a painter or handyman? Need some repairs done", location: "College Park, FL", category: "handyman" },
-  ] : [
-    { title: "Does anyone have a contact for a good deep cleaning service?", location: `${city}, FL`, category: "cleaning" },
-    { title: "My AC went out — need a good HVAC company recommendation", location: `${city}, FL`, category: "hvac", priority: "high" as const },
-    { title: "Looking to hire a landscaper for my backyard renovation", location: `${city}, FL`, category: "landscaping" },
-    { title: "Urgent — need water heater replacement today!", location: `${city}, FL`, category: "plumbing", priority: "high" as const },
-    { title: "Anyone recommend a painter or handyman? Need some repairs done", location: `${city}, FL`, category: "handyman" },
+  const loc = `${city.charAt(0).toUpperCase() + city.slice(1)}, FL`;
+
+  const posts = [
+    { title: "Does anyone have a contact for a good deep cleaning service?", category: "cleaning" },
+    { title: "My AC went out — need a good HVAC company recommendation", category: "hvac", priority: "high" as const },
+    { title: "Looking to hire a landscaper for my backyard renovation", category: "landscaping" },
+    { title: "Urgent — need water heater replacement today!", category: "plumbing", priority: "high" as const },
+    { title: "Anyone recommend a painter or handyman? Need some repairs done", category: "handyman" },
   ];
 
   let newLeads = 0;
   const now = new Date().toISOString();
 
-  for (const post of simulatedPosts) {
-    const fakeUrl = `https://facebook.com/groups/simulated-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    const lead: InsertLead = {
+  for (const post of posts) {
+    const fakeUrl = `https://facebook.com/groups/sim-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    storage.createLead({
       title: post.title,
       description: post.title,
       source: "facebook",
       sourceUrl: fakeUrl,
       category: post.category,
-      location: post.location,
+      location: loc,
       status: "new",
       priority: (post as any).priority || detectPriority(post.title),
       postedAt: now,
       discoveredAt: now,
-    };
-    storage.createLead(lead);
+    });
     newLeads++;
   }
 
-  storage.updateScanRun(runRecord.id, {
-    status: "success",
-    leadsFound: newLeads,
-    finishedAt: new Date().toISOString(),
-  });
-
+  storage.updateScanRun(runRecord.id, { status: "success", leadsFound: newLeads, finishedAt: now });
   return newLeads;
 }
 
@@ -307,9 +320,10 @@ export async function scanFacebook(): Promise<number> {
 export async function runAllScanners(): Promise<{ total: number; sources: Record<string, number> }> {
   const results: Record<string, number> = {};
 
-  // Use real scrapers if credentials are set, otherwise fall back to simulated
   const useRealNextdoor = !!(process.env.NEXTDOOR_EMAIL && process.env.NEXTDOOR_PASSWORD);
   const useRealFacebook = !!(process.env.FACEBOOK_EMAIL && process.env.FACEBOOK_PASSWORD);
+
+  console.log(`[Scanner] Starting all scanners. Nextdoor: ${useRealNextdoor ? "real" : "simulated"}, Facebook: ${useRealFacebook ? "real" : "simulated"}`);
 
   const [cl, reddit, nextdoor, fb] = await Promise.allSettled([
     scanCraigslist(),
@@ -324,5 +338,6 @@ export async function runAllScanners(): Promise<{ total: number; sources: Record
   results.facebook = fb.status === "fulfilled" ? fb.value : 0;
 
   const total = Object.values(results).reduce((a, b) => a + b, 0);
+  console.log(`[Scanner] Done. Total: ${total}`, results);
   return { total, sources: results };
 }
