@@ -8,7 +8,7 @@ import { scanFacebookReal } from "./scrapers/facebook";
 
 // ---- CRAIGSLIST ----
 export async function scanCraigslist(city?: string): Promise<number> {
-  const activeCity = city || storage.getSetting("city") || process.env.DEFAULT_CITY || "orlando";
+  const activeCity = (city || storage.getSetting("city") || process.env.DEFAULT_CITY || "orlando").toLowerCase().replace(/\s+/g, "");
   const runRecord = storage.createScanRun({
     source: "craigslist",
     status: "running",
@@ -106,17 +106,14 @@ export async function scanReddit(): Promise<number> {
     startedAt: new Date().toISOString(),
   });
 
-  const city = storage.getSetting("city") || process.env.DEFAULT_CITY || "orlando";
-  const cityLower = city.toLowerCase().replace(/\s+/g, "");
+  const city = (storage.getSetting("city") || process.env.DEFAULT_CITY || "orlando").toLowerCase();
+  const cityLower = city.replace(/\s+/g, "");
 
   const subreddits = [
     "HomeImprovement", "DIY", "Plumbing", "hvac", "lawncare",
     "homeowners", "orlando", "cenfl", "florida", cityLower,
   ].filter((v, i, a) => v && a.indexOf(v) === i);
 
-  let newLeads = 0;
-
-  // Request words — someone looking to HIRE someone
   const requestWords = [
     "looking for", "need a", "need help", "need someone", "hire",
     "recommend", "recommendations", "suggestion", "who do you use",
@@ -125,29 +122,53 @@ export async function scanReddit(): Promise<number> {
     "best company", "good company", "good plumber", "good hvac",
   ];
 
+  let newLeads = 0;
+
+  // Get Reddit access token using client credentials
+  const clientId = process.env.REDDIT_CLIENT_ID;
+  const clientSecret = process.env.REDDIT_CLIENT_SECRET;
+
+  let authHeader = "";
+  if (clientId && clientSecret) {
+    try {
+      const tokenRes = await axios.post(
+        "https://www.reddit.com/api/v1/access_token",
+        "grant_type=client_credentials",
+        {
+          auth: { username: clientId, password: clientSecret },
+          headers: { "User-Agent": "HomeLeadScanner/1.0 by homeleads_pro" },
+          timeout: 10000,
+        }
+      );
+      authHeader = `Bearer ${tokenRes.data.access_token}`;
+      console.log("[Reddit] Got OAuth token");
+    } catch (e: any) {
+      console.log("[Reddit] OAuth failed, using public API:", e.message);
+    }
+  }
+
   try {
     for (const sub of subreddits) {
       try {
-        // Try both /new and /hot for more coverage
         for (const sort of ["new", "hot"]) {
-          const url = `https://www.reddit.com/r/${sub}/${sort}.json?limit=50`;
-          console.log(`[Reddit] Fetching r/${sub}/${sort}...`);
+          const baseUrl = authHeader
+            ? `https://oauth.reddit.com/r/${sub}/${sort}.json?limit=50`
+            : `https://www.reddit.com/r/${sub}/${sort}.json?limit=50`;
 
-          const res = await axios.get(url, {
-            timeout: 12000,
-            headers: {
-              "User-Agent": "Mozilla/5.0 (compatible; HomeLeadBot/1.0; +https://homeleads.pro)",
-              "Accept": "application/json",
-            },
-          });
+          const headers: any = {
+            "User-Agent": "HomeLeadScanner/1.0 by homeleads_pro",
+            "Accept": "application/json",
+          };
+          if (authHeader) headers["Authorization"] = authHeader;
+
+          console.log(`[Reddit] Fetching r/${sub}/${sort}...`);
+          const res = await axios.get(baseUrl, { timeout: 12000, headers });
 
           const posts = res.data?.data?.children || [];
           console.log(`[Reddit] r/${sub}/${sort} → ${posts.length} posts`);
 
-          let subLeads = 0;
           for (const post of posts) {
             const d = post.data;
-            if (d.is_self === false && !d.selftext) continue; // skip link posts
             const title: string = d.title || "";
             const body: string = d.selftext || "";
             const fullText = `${title} ${body}`;
@@ -174,11 +195,8 @@ export async function scanReddit(): Promise<number> {
               discoveredAt: new Date().toISOString(),
             });
             newLeads++;
-            subLeads++;
-            console.log(`[Reddit] Lead from r/${sub}: "${title.slice(0, 60)}" [${category}]`);
+            console.log(`[Reddit] Lead: "${title.slice(0, 60)}" [${category}]`);
           }
-
-          if (subLeads === 0) console.log(`[Reddit] r/${sub}/${sort} → 0 leads (filtered out)`);
           await new Promise(r => setTimeout(r, 600));
         }
       } catch (err: any) {

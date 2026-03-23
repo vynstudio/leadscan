@@ -103,9 +103,12 @@ export async function scanNextdoorReal(): Promise<number> {
     // Check if session is valid
     await page.goto("https://nextdoor.com/news_feed/", { waitUntil: "domcontentloaded", timeout: 25000 });
     await page.waitForTimeout(3000);
-    console.log(`[Nextdoor] Session check URL: ${page.url()}`);
+    const currentUrl = page.url();
+    console.log(`[Nextdoor] Session check URL: ${currentUrl}`);
 
-    const isLoggedIn = page.url().includes("news_feed") || page.url().includes("home");
+    // Must be on the actual news feed page, NOT the login page
+    const isLoggedIn = currentUrl.includes("nextdoor.com/news_feed") ||
+      (currentUrl.includes("nextdoor.com/") && !currentUrl.includes("/login") && !currentUrl.includes("/signin"));
 
     if (!isLoggedIn) {
       console.log("[Nextdoor] Logging in...");
