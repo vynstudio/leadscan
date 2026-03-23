@@ -43,23 +43,6 @@ export default function Layout({ children, onLogout }: { children: React.ReactNo
     onLogout?.();
   };
 
-  const { data: stats } = useQuery<any>({
-    queryKey: ["/api/stats"],
-    refetchInterval: 10000,
-  });
-
-  const { data: scanStatus } = useQuery<any>({
-    queryKey: ["/api/scan/status"],
-    refetchInterval: 3000,
-  });
-
-  const scanMutation = useMutation({
-    mutationFn: () => apiRequest("POST", "/api/scan"),
-    onSuccess: () => {
-      setTimeout(() => qc.invalidateQueries(), 5000);
-    },
-  });
-
   return (
     <div className="flex h-screen bg-background text-foreground overflow-hidden">
       {/* Sidebar */}
