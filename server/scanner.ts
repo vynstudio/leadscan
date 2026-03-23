@@ -5,6 +5,7 @@ import type { InsertLead } from "@shared/schema";
 import { detectCategory, detectPriority, SERVICE_KEYWORDS } from "./keywords";
 import { scanNextdoorReal } from "./scrapers/nextdoor";
 import { scanFacebookReal } from "./scrapers/facebook";
+import { scanYelp } from "./scrapers/yelp";
 
 // ---- CRAIGSLIST ----
 export async function scanCraigslist(city?: string): Promise<number> {
@@ -97,122 +98,6 @@ export async function scanCraigslist(city?: string): Promise<number> {
   return newLeads;
 }
 
-// ---- REDDIT ----
-export async function scanReddit(): Promise<number> {
-  const runRecord = storage.createScanRun({
-    source: "reddit",
-    status: "running",
-    leadsFound: 0,
-    startedAt: new Date().toISOString(),
-  });
-
-  const city = (storage.getSetting("city") || process.env.DEFAULT_CITY || "orlando").toLowerCase();
-  const cityLower = city.replace(/\s+/g, "");
-
-  const subreddits = [
-    "HomeImprovement", "DIY", "Plumbing", "hvac", "lawncare",
-    "homeowners", "orlando", "cenfl", "florida", cityLower,
-  ].filter((v, i, a) => v && a.indexOf(v) === i);
-
-  const requestWords = [
-    "looking for", "need a", "need help", "need someone", "hire",
-    "recommend", "recommendations", "suggestion", "who do you use",
-    "anyone know", "can anyone", "where can i find", "how do i find",
-    "contractor", "quote", "estimate", "cost to", "how much",
-    "best company", "good company", "good plumber", "good hvac",
-  ];
-
-  let newLeads = 0;
-
-  // Get Reddit access token using client credentials
-  const clientId = process.env.REDDIT_CLIENT_ID;
-  const clientSecret = process.env.REDDIT_CLIENT_SECRET;
-
-  let authHeader = "";
-  if (clientId && clientSecret) {
-    try {
-      const tokenRes = await axios.post(
-        "https://www.reddit.com/api/v1/access_token",
-        "grant_type=client_credentials",
-        {
-          auth: { username: clientId, password: clientSecret },
-          headers: { "User-Agent": "HomeLeadScanner/1.0 by homeleads_pro" },
-          timeout: 10000,
-        }
-      );
-      authHeader = `Bearer ${tokenRes.data.access_token}`;
-      console.log("[Reddit] Got OAuth token");
-    } catch (e: any) {
-      console.log("[Reddit] OAuth failed, using public API:", e.message);
-    }
-  }
-
-  try {
-    for (const sub of subreddits) {
-      try {
-        for (const sort of ["new", "hot"]) {
-          const baseUrl = authHeader
-            ? `https://oauth.reddit.com/r/${sub}/${sort}.json?limit=50`
-            : `https://www.reddit.com/r/${sub}/${sort}.json?limit=50`;
-
-          const headers: any = {
-            "User-Agent": "HomeLeadScanner/1.0 by homeleads_pro",
-            "Accept": "application/json",
-          };
-          if (authHeader) headers["Authorization"] = authHeader;
-
-          console.log(`[Reddit] Fetching r/${sub}/${sort}...`);
-          const res = await axios.get(baseUrl, { timeout: 12000, headers });
-
-          const posts = res.data?.data?.children || [];
-          console.log(`[Reddit] r/${sub}/${sort} → ${posts.length} posts`);
-
-          for (const post of posts) {
-            const d = post.data;
-            const title: string = d.title || "";
-            const body: string = d.selftext || "";
-            const fullText = `${title} ${body}`;
-            const permalink = `https://reddit.com${d.permalink}`;
-
-            if (storage.leadExistsByUrl(permalink)) continue;
-
-            const category = detectCategory(fullText);
-            if (category === "other") continue;
-
-            if (!requestWords.some(w => fullText.toLowerCase().includes(w))) continue;
-
-            storage.createLead({
-              title: title.slice(0, 200),
-              description: body.slice(0, 500) || title,
-              source: "reddit",
-              sourceUrl: permalink,
-              category,
-              location: `r/${sub}`,
-              contactName: d.author || undefined,
-              status: "new",
-              priority: detectPriority(fullText),
-              postedAt: new Date(d.created_utc * 1000).toISOString(),
-              discoveredAt: new Date().toISOString(),
-            });
-            newLeads++;
-            console.log(`[Reddit] Lead: "${title.slice(0, 60)}" [${category}]`);
-          }
-          await new Promise(r => setTimeout(r, 600));
-        }
-      } catch (err: any) {
-        console.log(`[Reddit] Error r/${sub}: ${err.message}`);
-      }
-    }
-
-    console.log(`[Reddit] Done — ${newLeads} new leads`);
-    storage.updateScanRun(runRecord.id, { status: "success", leadsFound: newLeads, finishedAt: new Date().toISOString() });
-  } catch (err: any) {
-    storage.updateScanRun(runRecord.id, { status: "failed", finishedAt: new Date().toISOString(), errorMessage: err.message });
-  }
-
-  return newLeads;
-}
-
 // ---- NEXTDOOR (fallback simulator if no credentials) ----
 export async function scanNextdoor(): Promise<number> {
   const city = storage.getSetting("city") || process.env.DEFAULT_CITY || "orlando";
@@ -266,16 +151,16 @@ export async function runAllScanners(): Promise<{ total: number; sources: Record
   const useRealFacebook = !!(process.env.FACEBOOK_EMAIL && process.env.FACEBOOK_PASSWORD);
   console.log(`[Scanner] Starting — Nextdoor: ${useRealNextdoor ? "REAL" : "simulated"}, Facebook: ${useRealFacebook ? "REAL" : "simulated"}`);
 
-  const [cl, reddit, nextdoor, fb] = await Promise.allSettled([
+  const [cl, yelp, nextdoor, fb] = await Promise.allSettled([
     scanCraigslist(),
-    scanReddit(),
+    scanYelp(),
     useRealNextdoor ? scanNextdoorReal() : scanNextdoor(),
     useRealFacebook ? scanFacebookReal() : scanFacebook(),
   ]);
 
   const results = {
     craigslist: cl.status === "fulfilled" ? cl.value : 0,
-    reddit: reddit.status === "fulfilled" ? reddit.value : 0,
+    yelp: yelp.status === "fulfilled" ? yelp.value : 0,
     nextdoor: nextdoor.status === "fulfilled" ? nextdoor.value : 0,
     facebook: fb.status === "fulfilled" ? fb.value : 0,
   };

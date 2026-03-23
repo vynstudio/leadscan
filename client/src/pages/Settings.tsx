@@ -9,7 +9,7 @@ import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Save, Info } from "lucide-react";
 
-const SOURCES = ["craigslist", "reddit", "nextdoor", "facebook"];
+const SOURCES = ["craigslist", "yelp", "nextdoor", "facebook"];
 
 export default function Settings() {
   const qc = useQueryClient();
@@ -21,7 +21,7 @@ export default function Settings() {
 
   const [scanInterval, setScanInterval] = useState("5");
   const [city, setCity] = useState("miami");
-  const [enabledSources, setEnabledSources] = useState<string[]>(["craigslist", "reddit", "nextdoor", "facebook"]);
+  const [enabledSources, setEnabledSources] = useState<string[]>(["craigslist", "yelp", "nextdoor", "facebook"]);
 
   useEffect(() => {
     if (settings) {
@@ -113,15 +113,19 @@ export default function Settings() {
         <CardContent className="px-5 pb-5 space-y-3">
           <div className="flex gap-2 text-xs text-muted-foreground">
             <Info className="w-3.5 h-3.5 shrink-0 mt-0.5" />
-            <span><strong className="text-foreground">Craigslist & Reddit</strong> — scanned via their public interfaces. Results are real and live.</span>
+            <span><strong className="text-foreground">Craigslist</strong> — scans household services & services wanted sections daily for your target city.</span>
           </div>
           <div className="flex gap-2 text-xs text-muted-foreground">
             <Info className="w-3.5 h-3.5 shrink-0 mt-0.5" />
-            <span><strong className="text-foreground">Nextdoor</strong> — Nextdoor does not provide a public API. This tool simulates realistic neighborhood posts. Connect Nextdoor Business Account for live data.</span>
+            <span><strong className="text-foreground">Yelp</strong> — scans local service listings and identifies businesses with active quote requests in your area.</span>
           </div>
           <div className="flex gap-2 text-xs text-muted-foreground">
             <Info className="w-3.5 h-3.5 shrink-0 mt-0.5" />
-            <span><strong className="text-foreground">Facebook Groups</strong> — Facebook restricts group access to authorized apps. This tool simulates community posts. Connect via Facebook Business API for live group monitoring.</span>
+            <span><strong className="text-foreground">Nextdoor</strong> — logs in with your credentials to scan the Ask section for neighbors requesting home services.</span>
+          </div>
+          <div className="flex gap-2 text-xs text-muted-foreground">
+            <Info className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+            <span><strong className="text-foreground">Facebook</strong> — logs in with your credentials to scan local community groups for service requests.</span>
           </div>
         </CardContent>
       </Card>
