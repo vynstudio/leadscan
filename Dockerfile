@@ -1,58 +1,64 @@
 # ---- Build stage ----
-FROM node:20-alpine AS builder
+# Use Debian-based node (NOT alpine) so native modules like better-sqlite3
+# compile with glibc and work in the same runtime image
+FROM node:20-bookworm-slim AS builder
 
 WORKDIR /app
 
+# Install build tools needed for better-sqlite3 native addon
+RUN apt-get update && apt-get install -y \
+  python3 \
+  make \
+  g++ \
+  --no-install-recommends && rm -rf /var/lib/apt/lists/*
+
 COPY package*.json ./
 RUN npm ci
+
+# Install Playwright Chromium browser (skip other browsers)
+ENV PLAYWRIGHT_BROWSERS_PATH=/app/playwright-browsers
+RUN npx playwright install --with-deps chromium
 
 COPY . .
 RUN npm run build
 
 # ---- Production stage ----
-FROM node:20-slim AS runner
+FROM node:20-bookworm-slim AS runner
 
 WORKDIR /app
 
-# Install system dependencies for Playwright's Chromium
+# Install Playwright system dependencies (chromium runtime libs)
 RUN apt-get update && apt-get install -y \
-  wget \
-  ca-certificates \
+  chromium \
   fonts-liberation \
   libatk-bridge2.0-0 \
-  libatk1.0-0 \
-  libcups2 \
-  libdbus-1-3 \
-  libdrm2 \
-  libgbm1 \
   libgtk-3-0 \
-  libnspr4 \
-  libnss3 \
-  libx11-6 \
   libx11-xcb1 \
-  libxcb1 \
-  libxcomposite1 \
-  libxcursor1 \
-  libxdamage1 \
-  libxext6 \
-  libxfixes3 \
-  libxi6 \
-  libxrandr2 \
-  libxrender1 \
+  libnss3 \
   libxss1 \
-  libxtst6 \
-  xdg-utils \
+  libasound2t64 \
+  libgbm1 \
+  libxcomposite1 \
+  libxdamage1 \
+  libxrandr2 \
   --no-install-recommends && rm -rf /var/lib/apt/lists/*
+
+# Tell Playwright to use the system Chromium
+ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+ENV PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium
 
 # Create data directory for SQLite persistence
 RUN mkdir -p /data
 
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/package*.json ./
-RUN npm ci --omit=dev
 
-# Let Playwright download its own Chromium headless shell
-RUN npx playwright install chromium --with-deps 2>/dev/null || npx playwright install chromium
+# Install production deps only — native modules rebuild for this exact image
+RUN apt-get update && apt-get install -y python3 make g++ --no-install-recommends \
+  && npm ci --omit=dev \
+  && apt-get remove -y python3 make g++ \
+  && apt-get autoremove -y \
+  && rm -rf /var/lib/apt/lists/*
 
 ENV NODE_ENV=production
 ENV PORT=8080
